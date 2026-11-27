@@ -1,0 +1,31 @@
+# Unit tests of the PlanGuard reviewer against the real plan fixtures.
+# No secrets, no AWS: it only runs pytest on the pull request's code.
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: python -m pip install --quiet --disable-pip-version-check -r planguard/requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest -q planguard/tests
