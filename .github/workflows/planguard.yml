@@ -1,0 +1,92 @@
+# PlanGuard: reviews the Terraform plan of every pull request.
+# Wednesday version: plan + summary comment. Thursday: AI review + risk gate.
+name: planguard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    # No `paths:` filter on purpose: a REQUIRED check that a path filter skips
+    # stays "Pending" forever and blocks the merge.
+
+permissions:
+  contents: read
+  id-token: write      # lets the job request an OIDC token to assume the AWS role
+  pull-requests: write # lets the job create/update the PlanGuard comment
+
+concurrency:
+  group: planguard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  planguard:
+    name: planguard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # No `environment:` on this job: it would change the OIDC `sub` claim
+    # that the AWS trust policy expects.
+    env:
+      AWS_REGION: us-east-1
+      TF_IN_AUTOMATION: "1"
+      TF_INPUT: "0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.2
+          terraform_wrapper: false
+
+      # TEMPORARY: prints ONLY the `sub` claim (never the token) so it can be
+      # compared with the bootstrap output `github_oidc_subject`.
+      # Remove this step once AssumeRoleWithWebIdentity works.
+      - name: Debug OIDC subject
+        shell: python
+        run: |
+          import base64, json, os, urllib.request
+          req = urllib.request.Request(
+              os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=sts.amazonaws.com",
+              headers={"Authorization": "bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]},
+          )
+          token = json.load(urllib.request.urlopen(req))["value"]
+          payload = token.split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          print("OIDC sub:", json.loads(base64.urlsafe_b64decode(payload))["sub"])
+
+      - name: Configure AWS credentials (read-only role via OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          role-session-name: planguard-pr-${{ github.event.pull_request.number }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Terraform init
+        working-directory: infra
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          SANDBOX_ACCOUNT_ID: ${{ secrets.SANDBOX_ACCOUNT_ID }}
+        run: |
+          printf 'bucket = "%s"\nallowed_account_ids = ["%s"]\n' "$TF_STATE_BUCKET" "$SANDBOX_ACCOUNT_ID" > backend.hcl
+          terraform init -input=false -backend-config=backend.hcl
+
+      - name: Terraform plan
+        working-directory: infra
+        env:
+          TF_VAR_sandbox_account_id: ${{ secrets.SANDBOX_ACCOUNT_ID }}
+        run: |
+          # -lock=false: the CI role is read-only and cannot write the S3 lock file.
+          terraform plan -input=false -lock=false -no-color -out=tfplan
+          terraform show -json tfplan > plan.json
+
+      - name: Build PlanGuard comment (preview)
+        run: scripts/summarize-plan.sh infra/plan.json > comment.md
+
+      - name: Post or update the PR comment
+        if: ${{ !cancelled() && hashFiles('comment.md') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: scripts/upsert-pr-comment.sh comment.md
