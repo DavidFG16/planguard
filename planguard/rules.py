@@ -77,6 +77,11 @@ def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 
 
+def _code_list(items: list[Any]) -> str:
+    """`a`, `b`: one code span per value, so Markdown keeps the values apart."""
+    return ", ".join(f"`{item}`" for item in items)
+
+
 def _planned(change: Change, attr: str) -> Any:
     return "(known after apply)" if change.is_unknown(attr) else change.after.get(attr)
 
@@ -180,7 +185,7 @@ def sg_open_to_world(change: Change, plan: Plan) -> list[Finding]:
         findings.append(Finding(
             Level.HIGH, "sg-open-to-world", change.address,
             f"{exposed} open to the internet",
-            f"Ingress from `{', '.join(world)}` to {exposed} on `{after.get('security_group_id') or change.address}`"
+            f"Ingress from {_code_list(world)} to {exposed} on `{after.get('security_group_id') or change.address}`"
             f" ({env_of(change)}). Anyone on the internet can try to connect.",
         ))
     return findings
@@ -192,14 +197,14 @@ def replace_network(change: Change, plan: Plan) -> list[Finding]:
         return []
     if change.type in _STATEFUL_TYPES and _is_prod(change):
         return []  # delete_stateful reports it as critical
-    paths = [".".join(str(p) for p in path) for path in change.replace_paths] or ["an attribute"]
+    paths = [".".join(str(p) for p in path) for path in change.replace_paths]
     diffs = [f"`{p}`: `{change.before.get(p)}` → `{_planned(change, p)}`" for p in paths if p in change.before]
     level = Level.HIGH if _is_prod(change) else Level.MEDIUM
     return [Finding(
         level, "replace-network", change.address,
-        f"{change.type} is destroyed and recreated",
-        f"`{', '.join(paths)}` cannot be updated in place, so Terraform deletes and recreates it "
-        f"({env_of(change)}). {'; '.join(diffs)}".strip(),
+        f"`{change.type}` is destroyed and recreated",
+        f"{_code_list(paths) if paths else 'An attribute'} cannot be updated in place, so Terraform deletes "
+        f"and recreates it ({env_of(change)}). {'; '.join(diffs)}".strip(),
     )]
 
 
@@ -213,7 +218,7 @@ def delete_stateful(change: Change, plan: Plan) -> list[Finding]:
     if change.kind == "replace" and not _is_prod(change):
         return []  # replace_network covers non-prod replacements
     level = Level.CRITICAL if _is_prod(change) else Level.HIGH
-    return [Finding(level, "delete-stateful", change.address, f"{change.type} with data is deleted",
+    return [Finding(level, "delete-stateful", change.address, f"`{change.type}` with data is deleted",
                     f"This {change.kind} destroys `{change.address}` ({env_of(change)}) and the data in it.")]
 
 
@@ -234,7 +239,7 @@ def s3_public_access(change: Change, plan: Plan) -> list[Finding]:
     bucket = change.value("bucket") or change.address
     return [Finding(
         level, "s3-public-access", change.address, "S3 Block Public Access turned off",
-        f"`{', '.join(disabled)}` → false on bucket `{bucket}` ({env_of(change)}). "
+        f"{_code_list(disabled)} → false on bucket `{bucket}` ({env_of(change)}). "
         "This removes the safety net that stops a policy or ACL from making the bucket public.",
     )]
 
@@ -248,11 +253,11 @@ def s3_public_policy(change: Change, plan: Plan) -> list[Finding]:
         principal = statement.get("Principal")
         public = principal == "*" or (isinstance(principal, dict) and "*" in _as_list(principal.get("AWS")))
         if statement.get("Effect") == "Allow" and public and not statement.get("Condition"):
-            actions = ", ".join(_as_list(statement.get("Action")))
-            resources = ", ".join(_as_list(statement.get("Resource")))
+            actions = _code_list(_as_list(statement.get("Action")))
+            resources = _code_list(_as_list(statement.get("Resource")))
             findings.append(Finding(
                 Level.CRITICAL, "s3-public-policy", change.address, "Bucket readable by anyone on the internet",
-                f"Statement `{statement.get('Sid', '(no Sid)')}` allows `{actions}` on `{resources}` to "
+                f"Statement `{statement.get('Sid', '(no Sid)')}` allows {actions} on {resources} to "
                 "`Principal: *` with no condition: no AWS credentials needed.",
             ))
     return findings
@@ -277,8 +282,9 @@ def rds_unsafe(change: Change, plan: Plan) -> list[Finding]:
         level, rule_id = Level.CRITICAL, "rds-unsafe-prod"
     else:
         level, rule_id = Level.MEDIUM, "rds-unsafe"
+    summary = "; ".join(violations)
     return [Finding(level, rule_id, change.address, "Database without production safeguards",
-                    "; ".join(violations) + f" ({env_of(change)}).")]
+                    f"{summary[0].upper()}{summary[1:]}. Environment: {env_of(change)}.")]
 
 
 # ------------------------------------------------------------------------- IAM
@@ -305,11 +311,11 @@ def iam_policy(change: Change, plan: Plan) -> list[Finding]:
         wildcards = [a for a in actions if a == "*" or a.endswith(":*")]
         if statement.get("Effect") == "Allow" and wildcards:
             level = Level.HIGH if _is_prod(change) else Level.MEDIUM
-            resources = ", ".join(_as_list(statement.get("Resource")))
+            resources = _code_list(_as_list(statement.get("Resource")))
             findings.append(Finding(
-                level, "iam-wildcard", change.address, f"Wildcard permission `{', '.join(wildcards)}`",
-                f"Statement `{statement.get('Sid', '(no Sid)')}` allows every action in `{', '.join(wildcards)}` "
-                f"on `{resources}` ({env_of(change)}), including deletes and policy changes.",
+                level, "iam-wildcard", change.address, f"Wildcard permission {_code_list(wildcards)}",
+                f"Statement `{statement.get('Sid', '(no Sid)')}` allows every action in {_code_list(wildcards)} "
+                f"on {resources} ({env_of(change)}), including deletes and policy changes.",
             ))
     return findings
 
