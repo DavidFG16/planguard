@@ -81,6 +81,16 @@ resource "aws_vpc_security_group_ingress_rule" "portal_prod_https" {
   cidr_ipv4         = aws_vpc.env[local.portal_prod_env_short].cidr_block
 }
 
+# Temporary: SSH into the portal tasks to debug the login timeouts.
+resource "aws_vpc_security_group_ingress_rule" "portal_prod_ssh" {
+  security_group_id = aws_security_group.portal_prod_app.id
+  description       = "SSH for debugging"
+  ip_protocol       = "tcp"
+  from_port         = 22
+  to_port           = 22
+  cidr_ipv4         = "0.0.0.0/0"
+}
+
 resource "aws_vpc_security_group_egress_rule" "portal_prod_all" {
   security_group_id = aws_security_group.portal_prod_app.id
   description       = "All outbound traffic"
