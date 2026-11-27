@@ -1,0 +1,5 @@
+# Copy to infra/backend.hcl (gitignored). Used only from your laptop through
+# scripts/sandbox.sh. CI generates its own backend.hcl from repository secrets.
+bucket              = "acme-tfstate-00000000" # TODO: replace -> bootstrap output state_bucket_name
+profile             = "acme-sandbox"
+allowed_account_ids = ["000000000000"] # TODO: replace with your PERSONAL account ID
