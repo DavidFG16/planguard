@@ -65,13 +65,36 @@ resource "aws_route_table" "shared_public" {
   }
 }
 
+# NAT gateway: gives the shared tools one fixed outbound IP (the Elastic IP)
+# that partners can allowlist.
+resource "aws_eip" "shared_nat" {
+  domain = "vpc"
+
+  tags = {
+    Name        = "acme-shared-nat"
+    Environment = "shared"
+  }
+}
+
+resource "aws_nat_gateway" "shared" {
+  allocation_id = aws_eip.shared_nat.id
+  subnet_id     = aws_subnet.shared_public["a"].id
+
+  tags = {
+    Name        = "acme-shared-nat"
+    Environment = "shared"
+  }
+
+  depends_on = [aws_internet_gateway.shared]
+}
+
 # The default route is its own resource (not inline in the route table), so a
 # change of target shows up in a plan as a clear in-place update.
 # EVERY tool in the shared VPC reaches the internet through this route.
 resource "aws_route" "shared_public_default" {
   route_table_id         = aws_route_table.shared_public.id
   destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.shared.id
+  nat_gateway_id         = aws_nat_gateway.shared.id
 }
 
 resource "aws_route_table_association" "shared_public" {
