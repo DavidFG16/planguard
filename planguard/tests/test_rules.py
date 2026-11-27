@@ -49,7 +49,7 @@ def test_nat_self_loop_names_the_route_table_subnets(load_plan):
 def test_public_bucket_lists_the_disabled_flags(load_plan):
     findings = {f.rule_id: f for f in evaluate(load_plan("06-public-bucket-prod"))}
     why = findings["s3-public-access"].why
-    assert "block_public_policy" in why and "restrict_public_buckets" in why
+    assert "`block_public_policy`, `restrict_public_buckets` → false" in why  # one code span per flag
     assert "block_public_acls" not in why  # it stays true in the scenario
 
 
@@ -57,6 +57,7 @@ def test_unsafe_database_lists_every_violation(load_plan):
     finding = next(f for f in evaluate(load_plan("07-rds-prod-unsafe")) if f.rule_id == "rds-unsafe-prod")
     for attr in ("storage_encrypted", "deletion_protection", "skip_final_snapshot"):
         assert attr in finding.why
+    assert finding.why.startswith("Storage is not encrypted") and finding.why.endswith("Environment: production.")
 
 
 def test_subnet_replacement_explains_the_forcing_attribute(load_plan):
