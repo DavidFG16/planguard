@@ -1,0 +1,31 @@
+# --- Terraform ---
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+backend.hcl
+tfplan
+tfplan.json
+plan.json
+comment.md
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# --- Local sandbox identity (never commit) ---
+.sandbox.env
+
+# --- Claude Code local settings ---
+.claude/settings.local.json
+
+# --- Python (PlanGuard tool) ---
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# --- OS ---
+.DS_Store
