@@ -30,9 +30,9 @@ resource "aws_s3_bucket_public_access_block" "reports_prod_exports" {
   bucket = aws_s3_bucket.reports_prod_exports.id
 
   block_public_acls       = true
-  block_public_policy     = true
+  block_public_policy     = false # partners read the exports through the bucket policy below
   ignore_public_acls      = true
-  restrict_public_buckets = true
+  restrict_public_buckets = false
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "reports_prod_exports" {
@@ -60,6 +60,28 @@ resource "aws_s3_bucket_versioning" "reports_prod_exports" {
   versioning_configuration {
     status = "Enabled"
   }
+}
+
+# Partners download the monthly exports straight from S3, without AWS credentials.
+data "aws_iam_policy_document" "reports_prod_exports_public_read" {
+  statement {
+    sid       = "PartnersReadExports"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.reports_prod_exports.arn}/*"]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "reports_prod_exports" {
+  bucket = aws_s3_bucket.reports_prod_exports.id
+  policy = data.aws_iam_policy_document.reports_prod_exports_public_read.json
+
+  # Block Public Access must be relaxed first, or S3 rejects a public policy.
+  depends_on = [aws_s3_bucket_public_access_block.reports_prod_exports]
 }
 
 # ------------------------------------------------------------- Security group
