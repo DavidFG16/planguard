@@ -117,7 +117,7 @@ locals {
     prod = {
       environment = "production"
       cidr        = "10.30.0.0/16"
-      subnets     = { a = "10.30.1.0/24", b = "10.30.2.0/24" }
+      subnets     = { a = "10.30.1.0/24", b = "10.30.2.0/23" }
     }
   }
 
