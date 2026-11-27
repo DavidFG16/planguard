@@ -20,6 +20,26 @@ Pull request ──► GitHub Actions
 
 **Rules decide, AI explains.** The risk level never depends on a model's opinion. The rules are plain code with tests. Claude turns the raw plan into something a reviewer can act on in 30 seconds.
 
+## How PlanGuard decides
+
+The rules in [`planguard/rules.py`](planguard/rules.py) read the plan JSON. The highest finding is the pull request's risk level. Only ⛔ fails the check.
+
+| Rule | What it catches | Risk |
+|---|---|---|
+| `default-route-change` | The `0.0.0.0/0` route of a route table stops pointing at the internet gateway. The finding lists the subnets and workloads behind that route table | ⛔ |
+| `nat-self-loop` | A new NAT gateway sits in a subnet whose default route now points at that same NAT | ⛔ |
+| `s3-public-access` / `s3-public-policy` | Block Public Access turned off, or a bucket policy that allows `Principal: *` with no condition | ⛔ in prod |
+| `rds-unsafe-prod` | A production database that is unencrypted, has no deletion protection, skips the final snapshot, has no backups or is public | ⛔ |
+| `delete-stateful` | A bucket or database is deleted (or replaced in production) | ⛔ in prod |
+| `sg-open-to-world` | SSH, RDP or every port open to `0.0.0.0/0` or `::/0` | 🔴 |
+| `replace-network` | A network or stateful resource is destroyed and recreated. The finding names the attribute that forces it | 🔴 in prod |
+| `iam-wildcard` | `Action: "*"` or `service:*` in an IAM policy | 🔴 in prod, 🟡 elsewhere |
+| `iam-unknown-policy` | An IAM policy whose content is only known after apply | 🟡 |
+| `prod-change` | Any other production change | 🟡 |
+| `tags-only` / `deferred-read` | Tag-only updates. Also IAM policies that show as changed only because Terraform re-reads a data source whose inputs only change tags | 🟢 |
+
+Claude (Opus 5.5) then gets the findings and the facts behind them: changed values, dependent resources, and the subnets and tools behind a route table. From those it writes the summary, blast radius, rollback steps and a reviewer checklist. Plan and pull request content is treated as untrusted data. A prompt injection can only change the text, never the verdict. If Claude is not available (no key, API error, refusal), the comment shows the rules alone, and the verdict and exit code stay the same.
+
 ## Repository layout
 
 | Path | What it is |
@@ -37,7 +57,7 @@ Pull request ──► GitHub Actions
 - **CI is read-only.** GitHub Actions assumes `acme-ci-plan` through OIDC, so there are no stored keys. The trust policy only accepts `pull_request` runs of this repository, matched on its immutable owner and repo IDs. The role has `ReadOnlyAccess` plus an explicit **Deny** on data reads (S3 objects other than the state, logs, parameters and secrets). The plan runs with `-lock=false`, so CI cannot create, change, or read anything private, even if a pull request tries.
 - **Cost guard.** `scripts/sandbox.sh apply` blocks any plan that creates a paid resource type: NAT gateways, EIPs, EC2, RDS, load balancers, KMS keys and others. The dangerous demo scenarios exist only as plans and are never applied. An AWS Budget emails at 50% and 100%.
 - **Public repo hygiene.** The account ID, role ARN and state bucket are repository **secrets**, so they are masked in logs. No artifacts are uploaded, fixtures are sanitized, and bucket names use a random suffix instead of the account ID.
-- **Tamper resistance** (planned for Thursday). The tool runs from the base branch (`base.sha`), so a pull request cannot edit its own reviewer.
+- **Tamper resistance.** The reviewer, its dependencies and the comment script run from a second checkout of the base branch (`base.sha`), so a pull request cannot edit its own reviewer. `ANTHROPIC_API_KEY` is only passed to that step.
 - **Known limitation.** A pull request could edit the workflow file itself. In a real repository, protect `.github/` with CODEOWNERS and required reviews.
 
 ## Demo scenarios
@@ -97,11 +117,16 @@ import {
 scripts/sandbox.sh check                          # offline fmt + validate, no AWS calls
 scripts/sandbox.sh tf -chdir=infra plan
 scripts/export-fixtures.sh                        # refresh planguard/tests/fixtures/
+
+# The reviewer, locally (rules only: your laptop never needs the Anthropic key)
+python3 -m venv .venv && .venv/bin/pip install -r planguard/requirements-dev.txt
+.venv/bin/python -m pytest -q planguard/tests
+.venv/bin/python -m planguard planguard/tests/fixtures/05-nat-shared-vpc.json --offline
 ```
 
 ## Status
 
 - [x] Sandbox infrastructure, read-only CI role and pull request pipeline with plan summary
-- [ ] Risk rules and Claude explanation (`planguard/`)
+- [x] Risk rules and Claude explanation (`planguard/`), tested on real plan fixtures
 - [ ] Merge blocking on ⛔ (repository ruleset)
 - [ ] Demo video
