@@ -1,5 +1,6 @@
 # PlanGuard: reviews the Terraform plan of every pull request.
-# Wednesday version: plan + summary comment. Thursday: AI review + risk gate.
+# terraform plan (read-only OIDC role) -> deterministic risk rules + Claude
+# explanation -> one sticky PR comment -> the check fails on critical risk.
 name: planguard
 
 on:
@@ -33,27 +34,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # The reviewer runs from the BASE branch: a pull request cannot change the
+      # code that judges it, or the code that receives the Anthropic API key.
+      - name: Checkout PlanGuard from the base branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .planguard-base
+          persist-credentials: false
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.15.2
           terraform_wrapper: false
-
-      # TEMPORARY: prints ONLY the `sub` claim (never the token) so it can be
-      # compared with the bootstrap output `github_oidc_subject`.
-      # Remove this step once AssumeRoleWithWebIdentity works.
-      - name: Debug OIDC subject
-        shell: python
-        run: |
-          import base64, json, os, urllib.request
-          req = urllib.request.Request(
-              os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=sts.amazonaws.com",
-              headers={"Authorization": "bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]},
-          )
-          token = json.load(urllib.request.urlopen(req))["value"]
-          payload = token.split(".")[1]
-          payload += "=" * (-len(payload) % 4)
-          print("OIDC sub:", json.loads(base64.urlsafe_b64decode(payload))["sub"])
 
       - name: Configure AWS credentials (read-only role via OIDC)
         uses: aws-actions/configure-aws-credentials@v6
@@ -81,12 +75,52 @@ jobs:
           terraform plan -input=false -lock=false -no-color -out=tfplan
           terraform show -json tfplan > plan.json
 
-      - name: Build PlanGuard comment (preview)
-        run: scripts/summarize-plan.sh infra/plan.json > comment.md
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      # Runs from .planguard-base, so `python -m planguard` imports the base
+      # branch's package, never the copy inside the pull request.
+      - name: PlanGuard review
+        id: review
+        working-directory: .planguard-base
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }} # only this step gets it
+          SANDBOX_ACCOUNT_ID: ${{ secrets.SANDBOX_ACCOUNT_ID }} # to scrub it from the comment
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          if [ -f planguard/__main__.py ]; then
+            python -m pip install --quiet --disable-pip-version-check -r planguard/requirements.txt \
+              && python -m planguard ../infra/plan.json --out ../comment.md
+            code=$?
+          else
+            # Transition only: the base branch does not have the reviewer yet.
+            scripts/summarize-plan.sh ../infra/plan.json > ../comment.md
+            code=$?
+          fi
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
 
       - name: Post or update the PR comment
         if: ${{ !cancelled() && hashFiles('comment.md') != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: scripts/upsert-pr-comment.sh comment.md
+        run: .planguard-base/scripts/upsert-pr-comment.sh comment.md
+
+      # 0 = low/medium/high (pass), 2 = critical (merge blocked), anything else =
+      # PlanGuard failed, which also blocks (fail closed).
+      - name: Risk gate
+        if: ${{ !cancelled() }}
+        env:
+          EXIT_CODE: ${{ steps.review.outputs.exit_code }}
+        run: |
+          case "${EXIT_CODE:-missing}" in
+            0) echo "PlanGuard: no critical risk." ;;
+            2) echo "::error title=PlanGuard::Critical risk, merge blocked. See the PlanGuard comment on the pull request."
+               exit 1 ;;
+            *) echo "::error title=PlanGuard::PlanGuard did not finish (exit code: ${EXIT_CODE:-missing})."
+               exit 1 ;;
+          esac
