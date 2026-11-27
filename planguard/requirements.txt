@@ -1,0 +1,2 @@
+# Runtime dependencies of the PlanGuard reviewer (installed in CI from the base branch).
+anthropic==2.14.0
