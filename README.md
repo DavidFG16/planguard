@@ -89,7 +89,7 @@ import {
 }
 ```
 
-**If the first pull request fails at "Configure AWS credentials":** compare the `OIDC sub:` line printed by the workflow with `scripts/sandbox.sh tf -chdir=bootstrap output github_oidc_subject`. If they differ, set `github_oidc_subject_override` in `bootstrap/terraform.tfvars` and apply bootstrap again.
+**If a pull request fails at "Configure AWS credentials":** the OIDC `sub` that GitHub sends does not match the role trust (`scripts/sandbox.sh tf -chdir=bootstrap output github_oidc_subject`). To see the `sub` that GitHub sends, restore the temporary "Debug OIDC subject" step for one run (`git show 1e6609e:.github/workflows/planguard.yml`). Then set `github_oidc_subject_override` in `bootstrap/terraform.tfvars` and apply bootstrap again.
 
 ## Everyday commands
 

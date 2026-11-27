@@ -39,22 +39,6 @@ jobs:
           terraform_version: 1.15.2
           terraform_wrapper: false
 
-      # TEMPORARY: prints ONLY the `sub` claim (never the token) so it can be
-      # compared with the bootstrap output `github_oidc_subject`.
-      # Remove this step once AssumeRoleWithWebIdentity works.
-      - name: Debug OIDC subject
-        shell: python
-        run: |
-          import base64, json, os, urllib.request
-          req = urllib.request.Request(
-              os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=sts.amazonaws.com",
-              headers={"Authorization": "bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]},
-          )
-          token = json.load(urllib.request.urlopen(req))["value"]
-          payload = token.split(".")[1]
-          payload += "=" * (-len(payload) % 4)
-          print("OIDC sub:", json.loads(base64.urlsafe_b64decode(payload))["sub"])
-
       - name: Configure AWS credentials (read-only role via OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
