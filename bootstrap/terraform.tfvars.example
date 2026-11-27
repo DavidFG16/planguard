@@ -1,0 +1,10 @@
+# Copy to bootstrap/terraform.tfvars (gitignored) and fill in.
+# sandbox_account_id is NOT here: scripts/sandbox.sh exports it from .sandbox.env.
+
+github_owner    = "DavidFG16"
+github_owner_id = "0"   # TODO: replace -> gh api repos/DavidFG16/planguard --jq .owner.id
+github_repo     = "planguard"
+github_repo_id  = "0"   # TODO: replace -> gh api repos/DavidFG16/planguard --jq .id
+
+budget_email     = "you@example.com" # TODO: replace with your PERSONAL email
+budget_limit_usd = 5
