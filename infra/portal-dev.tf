@@ -22,8 +22,9 @@ resource "aws_s3_bucket" "portal_dev_data" {
   bucket = "acme-${local.portal_dev_name}-data-${local.name_suffix}"
 
   tags = merge(local.portal_dev_tags, {
-    Name = "${local.portal_dev_name}-data"
-    Data = "documents"
+    Name       = "${local.portal_dev_name}-data"
+    Data       = "documents"
+    CostCenter = "patient-experience"
   })
 }
 
