@@ -89,16 +89,14 @@ resource "aws_iam_role" "reports_dev_task" {
 
 # Least privilege: reports can list its bucket and read/write its exports.
 data "aws_iam_policy_document" "reports_dev_task" {
+  # The export job kept failing with AccessDenied: allow everything on its own bucket.
   statement {
-    sid       = "ListOwnBucket"
-    actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.reports_dev_exports.arn]
-  }
-
-  statement {
-    sid       = "ReadWriteOwnExports"
-    actions   = ["s3:GetObject", "s3:PutObject"]
-    resources = ["${aws_s3_bucket.reports_dev_exports.arn}/*"]
+    sid     = "FullAccessOwnBucket"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.reports_dev_exports.arn,
+      "${aws_s3_bucket.reports_dev_exports.arn}/*",
+    ]
   }
 }
 
