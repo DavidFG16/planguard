@@ -116,6 +116,41 @@ resource "aws_iam_role_policy" "portal_prod_task" {
   policy = data.aws_iam_policy_document.portal_prod_task.json
 }
 
+# ------------------------------------------------------------- Database
+
+# RDS needs a subnet group that spans at least two availability zones.
+resource "aws_db_subnet_group" "portal_prod" {
+  name       = "acme-${local.portal_prod_name}"
+  subnet_ids = [aws_subnet.private["prod-a"].id, aws_subnet.private["prod-b"].id]
+  tags       = local.portal_prod_tags
+}
+
+# Postgres for the portal. manage_master_user_password keeps the admin password
+# in Secrets Manager (managed by RDS), so it never appears in code or state.
+resource "aws_db_instance" "portal_prod" {
+  identifier     = "acme-${local.portal_prod_name}"
+  engine         = "postgres"
+  engine_version = "17"
+  instance_class = "db.t4g.micro"
+
+  allocated_storage = 20
+  storage_type      = "gp3"
+  storage_encrypted = false
+
+  db_name                     = "portal"
+  username                    = "portal_admin"
+  manage_master_user_password = true
+
+  db_subnet_group_name   = aws_db_subnet_group.portal_prod.name
+  vpc_security_group_ids = [aws_security_group.portal_prod_app.id]
+  publicly_accessible    = false
+
+  deletion_protection = false
+  skip_final_snapshot = true
+
+  tags = local.portal_prod_tags
+}
+
 # ------------------------------------------------------------- Logs
 
 resource "aws_cloudwatch_log_group" "portal_prod" {
